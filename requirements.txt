@@ -1,9 +1,6 @@
+streamlit
 pandas
 numpy
-plotly
-ipywidgets
 matplotlib
 cartopy
 pyproj
-voila
-streamlit
