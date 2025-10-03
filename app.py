@@ -245,11 +245,15 @@ def plot_country_routes_static(
         lats = [lat1] + [p[1] for p in pts] + [lat2]
         ax.plot(lons, lats, transform=ccrs.Geodetic(), color=color, linewidth=lw, alpha=alpha, zorder=2)
 
+    # --- Draw routes and collect continents used (no inbound/outbound labels) ---
+    continents_used = set()
+
     # Outbound: color by DESTINATION continent
     if direction in ('outbound','both'):
         out = df[df['src_country_std'].eq(c_std)]
         for cont, sub in out.groupby('dst_continent'):
             col = COLORS.get(cont, COLORS['Other'])
+            continents_used.add(cont)
             for _, row in sub.iterrows():
                 draw_geodesic(row['src_lon'], row['src_lat'], row['dst_lon'], row['dst_lat'], col)
 
@@ -258,6 +262,7 @@ def plot_country_routes_static(
         inn = df[df['dst_country_std'].eq(c_std)]
         for cont, sub in inn.groupby('src_continent'):
             col = COLORS.get(cont, COLORS['Other'])
+            continents_used.add(cont)
             for _, row in sub.iterrows():
                 draw_geodesic(row['src_lon'], row['src_lat'], row['dst_lon'], row['dst_lat'], col)
 
@@ -265,7 +270,6 @@ def plot_country_routes_static(
     apts = airports_df.copy()
     apts['country_std'] = standardize_country(apts['country'])
     apts_sel = apts[apts['country_std'].eq(c_std)]
-
     if not apts_sel.empty:
         ax.scatter(
             apts_sel['lon'], apts_sel['lat'],
@@ -282,17 +286,14 @@ def plot_country_routes_static(
     if direction in ('inbound','both'):
         sub = df[df['dst_country_std'].eq(c_std)][['src_lon','src_lat']].dropna()
         other_chunks.append(sub.rename(columns={'src_lon':'lon','src_lat':'lat'}))
-
     if other_chunks:
         other_airports = pd.concat(other_chunks, ignore_index=True)
         other_airports['lon_r'] = other_airports['lon'].round(6)
         other_airports['lat_r'] = other_airports['lat'].round(6)
         other_airports = other_airports.drop_duplicates(['lon_r','lat_r'])
-
         if not apts_sel.empty:
             sel_xy = set(zip(apts_sel['lon'].round(6), apts_sel['lat'].round(6)))
             other_airports = other_airports[~other_airports[['lon_r','lat_r']].apply(tuple, axis=1).isin(sel_xy)]
-
         if not other_airports.empty:
             ax.scatter(
                 other_airports['lon'], other_airports['lat'],
@@ -301,16 +302,12 @@ def plot_country_routes_static(
                 linewidths=0.25, edgecolors='#111', zorder=3
             )
 
-    # Legend
-    handles = []
-    if direction in ('outbound','both'):
-        for cont in sorted(df[df['src_country_std'].eq(c_std)]['dst_continent'].dropna().unique()):
-            handles.append(Line2D([0],[0], color=COLORS.get(cont, COLORS['Other']), lw=2, label=f'Outbound – {cont}'))
-    if direction in ('inbound','both'):
-        for cont in sorted(df[df['dst_country_std'].eq(c_std)]['src_continent'].dropna().unique()):
-            handles.append(Line2D([0],[0], color=COLORS.get(cont, COLORS['Other']), lw=2, label=f'Inbound – {cont}'))
-
-    if handles:
+    # --- Legend: just continent names (no inbound/outbound) ---
+    if continents_used:
+        handles = [
+            Line2D([0],[0], color=COLORS.get(cont, COLORS['Other']), lw=2, label=cont)
+            for cont in sorted(continents_used)
+        ]
         leg = ax.legend(handles=handles, facecolor='black', edgecolor='#444', labelcolor='white', loc='lower left')
         for t in leg.get_texts():
             t.set_color('white')
@@ -322,13 +319,13 @@ def plot_country_routes_static(
 # =============================================================================
 #                              STREAMLIT UI
 # =============================================================================
-st.set_page_config(page_title="Aviation Routes Explorer", layout="wide")
-st.title("Aviation Routes Explorer")
+st.set_page_config(page_title="Country Routes Explorer", layout="wide")
+st.title("Country Routes Explorer")
 
 # Load & prepare
 airports, airlines, r_enriched = prepare_data()
 
-# UI controls (country + direction only; fixed dots & 50m coastlines)
+# UI controls (country + direction; fixed dots & 50m coastlines)
 country_opts   = sorted(airports['country'].dropna().unique().tolist())
 direction_opts = ['both','outbound','inbound']
 
