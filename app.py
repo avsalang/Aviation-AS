@@ -48,7 +48,6 @@ COUNTRY_ALIASES = {
     "Cape Verde": "Cabo Verde",
     "North Macedonia": "Macedonia",
 }
-
 def standardize_country(s: pd.Series) -> pd.Series:
     return s.replace(COUNTRY_ALIASES)
 
@@ -209,10 +208,10 @@ geod = Geod(ellps="WGS84")
 
 def plot_country_routes_static(
     r_df, airports_df, country_name: str, direction: str = "both",
-    coastline_res: str = "10m",  # "10m" best, "50m" faster
+    coastline_res: str = "50m",  # fixed to 50m
     projection=None,
-    sel_dot_size: float = 8,     # airports inside selected country
-    other_dot_size: float = 12   # airports at the other end of routes
+    sel_dot_size: float = 4,     # fixed: airports inside selected country
+    other_dot_size: float = 2    # fixed: airports at the other end of routes
 ):
     if projection is None:
         projection = ccrs.Robinson()
@@ -262,7 +261,7 @@ def plot_country_routes_static(
             for _, row in sub.iterrows():
                 draw_geodesic(row['src_lon'], row['src_lat'], row['dst_lon'], row['dst_lat'], col)
 
-    # Airports in selected country
+    # Airports in selected country (fixed size 4)
     apts = airports_df.copy()
     apts['country_std'] = standardize_country(apts['country'])
     apts_sel = apts[apts['country_std'].eq(c_std)]
@@ -275,7 +274,7 @@ def plot_country_routes_static(
             linewidths=0.25, edgecolors='#111', zorder=3
         )
 
-    # Other-end airports (deduped & excluding domestic duplicates)
+    # Other-end airports (fixed size 2; deduped & excluding domestic duplicates)
     other_chunks = []
     if direction in ('outbound','both'):
         sub = df[df['src_country_std'].eq(c_std)][['dst_lon','dst_lat']].dropna()
@@ -323,34 +322,30 @@ def plot_country_routes_static(
 # =============================================================================
 #                              STREAMLIT UI
 # =============================================================================
-st.set_page_config(page_title="Country Routes Explorer", layout="wide")
-st.title("Country Routes Explorer")
+st.set_page_config(page_title="Aviation Routes Explorer", layout="wide")
+st.title("Aviation Routes Explorer")
 
 # Load & prepare
 airports, airlines, r_enriched = prepare_data()
 
-# UI controls (match your notebook + dot sizes)
+# UI controls (country + direction only; fixed dots & 50m coastlines)
 country_opts   = sorted(airports['country'].dropna().unique().tolist())
 direction_opts = ['both','outbound','inbound']
-detail_opts    = ['10m','50m','110m']
 
 with st.sidebar:
     st.header("Controls")
     country = st.selectbox("Country", country_opts, index=0)
     direction = st.radio("Direction", direction_opts, index=0, horizontal=True)
-    detail = st.selectbox("Coastline detail", detail_opts, index=0)
-    sel_dot_size = st.slider("Selected-country airport size", 2, 30, 8)
-    other_dot_size = st.slider("Other-end airport size", 2, 40, 12)
 
-# Map first
+# Map first (fixed sizes & 50m coastlines)
 fig = plot_country_routes_static(
     r_df=r_enriched,
     airports_df=airports,
     country_name=country,
     direction=direction,
-    coastline_res=detail,
-    sel_dot_size=sel_dot_size,
-    other_dot_size=other_dot_size
+    coastline_res="50m",
+    sel_dot_size=4,
+    other_dot_size=2
 )
 st.pyplot(fig, use_container_width=True)
 
