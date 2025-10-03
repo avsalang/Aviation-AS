@@ -6,3 +6,4 @@ matplotlib
 cartopy
 pyproj
 voila
+streamlit
