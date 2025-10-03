@@ -319,8 +319,8 @@ def plot_country_routes_static(
 # =============================================================================
 #                              STREAMLIT UI
 # =============================================================================
-st.set_page_config(page_title="Country Routes Explorer", layout="wide")
-st.title("Country Routes Explorer")
+st.set_page_config(page_title="Aviation Routes Explorer", layout="wide")
+st.title("Aviation Routes Explorer")
 
 # Load & prepare
 airports, airlines, r_enriched = prepare_data()
