@@ -206,7 +206,7 @@ COLORS = {
 }
 geod = Geod(ellps="WGS84")
 
-
+#update 06/01/2026
 def plot_country_routes_static(
         r_df, airports_df, country_name: str, direction: str = "both",
         coastline_res: str = "50m",
