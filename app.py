@@ -214,12 +214,13 @@ def plot_country_routes_static(
         sel_dot_size: float = 4,
         other_dot_size: float = 2
 ):
-    # 1. Prepare Country Logic & Data
+    # =========================================================================
+    # 1. PREPARE DATA
+    # =========================================================================
     c_std = COUNTRY_ALIASES.get(country_name, country_name)
 
-    # Filter Routes
     mask_out = r_df['src_country_std'].eq(c_std)
-    mask_in = r_df['dst_country_std'].eq(c_std)
+    mask_in  = r_df['dst_country_std'].eq(c_std)
 
     if direction == 'outbound':
         df = r_df[mask_out]
@@ -228,136 +229,169 @@ def plot_country_routes_static(
     else:
         df = r_df[mask_out | mask_in]
 
-    # Filter Airports (for the selected country)
     apts = airports_df.copy()
     apts['country_std'] = standardize_country(apts['country'])
     apts_sel = apts[apts['country_std'].eq(c_std)]
 
-    # 2. Dynamic Centering (Rotate the Globe)
-    # Calculate the centroid longitude of the selected country to rotate the view
+    # =========================================================================
+    # 2. DATELINE-SAFE CENTER (CRITICAL)
+    # =========================================================================
+    def circular_mean_lon(lons):
+        ang = np.deg2rad(lons.values)
+        return float(np.rad2deg(np.arctan2(np.sin(ang).mean(),
+                                           np.cos(ang).mean())))
+
     if not apts_sel.empty:
-        center_lon = apts_sel['lon'].mean()
+        center_lon = circular_mean_lon(apts_sel['lon'].dropna())
+        center_lat = apts_sel['lat'].mean()
     else:
-        center_lon = 0
+        center_lon, center_lat = 0.0, 0.0
 
     if projection is None:
-        # Initialize Robinson with the calculated central longitude
         projection = ccrs.Robinson(central_longitude=center_lon)
 
-    # 3. Setup Plot
+    # =========================================================================
+    # 3. SETUP FIGURE
+    # =========================================================================
     fig = plt.figure(figsize=(16, 9), facecolor='black')
     ax = plt.axes(projection=projection, facecolor='black')
 
-    # 4. Dynamic Zoom (Set Extent)
-    # Collect all Lat/Lons involved (routes + country airports) to find bounds
-    all_lons = pd.concat([df['src_lon'], df['dst_lon'], apts_sel['lon']])
-    all_lats = pd.concat([df['src_lat'], df['dst_lat'], apts_sel['lat']])
+    # =========================================================================
+    # 4. CENTERED ROUTE-AWARE ZOOM (ROTATION-SAFE)
+    # =========================================================================
+    all_lons = pd.concat([df['src_lon'], df['dst_lon'], apts_sel['lon']]).dropna()
+    all_lats = pd.concat([df['src_lat'], df['dst_lat'], apts_sel['lat']]).dropna()
 
     if not all_lons.empty:
-        # Add a margin (padding) so points aren't on the absolute edge
-        margin = 10  # degrees
-        min_lon, max_lon = all_lons.min() - margin, all_lons.max() + margin
-        min_lat, max_lat = all_lats.min() - margin, all_lats.max() + margin
+        margin = 5
 
-        # Ensure we don't zoom out beyond the world
+        # --- unwrap longitudes relative to rotated center ---
+        rel_lons = ((all_lons - center_lon + 180) % 360) - 180
+        min_lon_r = rel_lons.min() - margin
+        max_lon_r = rel_lons.max() + margin
+
+        min_lat = all_lats.min() - margin
+        max_lat = all_lats.max() + margin
+
+        # --- enforce 16:9 aspect ratio ---
+        width  = max_lon_r - min_lon_r
+        height = max_lat - min_lat
+        target_ratio = 16 / 9
+        current_ratio = width / height if height > 0 else target_ratio
+
+        if current_ratio > target_ratio:
+            target_height = width / target_ratio
+            c_lat = (min_lat + max_lat) / 2
+            min_lat = c_lat - target_height / 2
+            max_lat = c_lat + target_height / 2
+        else:
+            target_width = height * target_ratio
+            c_lon_r = (min_lon_r + max_lon_r) / 2
+            min_lon_r = c_lon_r - target_width / 2
+            max_lon_r = c_lon_r + target_width / 2
+
         min_lat = max(min_lat, -90)
         max_lat = min(max_lat, 90)
 
-        # Apply the zoom
-        ax.set_extent([min_lon, max_lon, min_lat, max_lat], crs=ccrs.PlateCarree())
+        # --- rewrap into absolute lon space ---
+        min_lon = center_lon + min_lon_r
+        max_lon = center_lon + max_lon_r
+
+        ax.set_extent([min_lon, max_lon, min_lat, max_lat],
+                      crs=ccrs.PlateCarree())
     else:
-        # Fallback if no data found
         ax.set_global()
 
-    # Disable autoscaling so our set_extent holds
     ax.set_autoscale_on(False)
 
-    # --- Standard Map Features ---
-    ax.add_feature(cfeature.LAND.with_scale(coastline_res), facecolor='#1b1b1b', edgecolor='none', zorder=0)
-    ax.add_feature(cfeature.OCEAN.with_scale(coastline_res), facecolor='#0b0b0b', zorder=0)
-    ax.add_feature(cfeature.COASTLINE.with_scale(coastline_res), edgecolor='#aaaaaa', linewidth=0.6, zorder=1)
-    ax.add_feature(cfeature.LAKES.with_scale(coastline_res), facecolor='#0b0b0b', edgecolor='#0b0b0b', linewidth=0,
-                   zorder=1)
+    # =========================================================================
+    # 5. BASE MAP
+    # =========================================================================
+    ax.add_feature(cfeature.LAND.with_scale(coastline_res),
+                   facecolor='#1b1b1b', edgecolor='none', zorder=0)
+    ax.add_feature(cfeature.OCEAN.with_scale(coastline_res),
+                   facecolor='#0b0b0b', zorder=0)
+    ax.add_feature(cfeature.COASTLINE.with_scale(coastline_res),
+                   edgecolor='#aaaaaa', linewidth=0.6, zorder=1)
+    ax.add_feature(cfeature.LAKES.with_scale(coastline_res),
+                   facecolor='#0b0b0b', edgecolor='none', zorder=1)
     ax.gridlines(color='#333333', linewidth=0.25, alpha=0.3, draw_labels=False)
 
     def draw_geodesic(lon1, lat1, lon2, lat2, color, lw=0.35, npts=20, alpha=0.9):
         pts = geod.npts(lon1, lat1, lon2, lat2, npts)
         lons = [lon1] + [p[0] for p in pts] + [lon2]
         lats = [lat1] + [p[1] for p in pts] + [lat2]
-        ax.plot(lons, lats, transform=ccrs.Geodetic(), color=color, linewidth=lw, alpha=alpha, zorder=2)
+        ax.plot(lons, lats, transform=ccrs.Geodetic(),
+                color=color, linewidth=lw, alpha=alpha, zorder=2)
 
-    # --- Draw Routes ---
+    # =========================================================================
+    # 6. ROUTES
+    # =========================================================================
     continents_used = set()
 
-    # Outbound
     if direction in ('outbound', 'both'):
         out = df[df['src_country_std'].eq(c_std)]
         for cont, sub in out.groupby('dst_continent'):
             col = COLORS.get(cont, COLORS['Other'])
             continents_used.add(cont)
-            for _, row in sub.iterrows():
-                draw_geodesic(row['src_lon'], row['src_lat'], row['dst_lon'], row['dst_lat'], col)
+            for _, r in sub.iterrows():
+                draw_geodesic(r['src_lon'], r['src_lat'],
+                              r['dst_lon'], r['dst_lat'], col)
 
-    # Inbound
     if direction in ('inbound', 'both'):
         inn = df[df['dst_country_std'].eq(c_std)]
         for cont, sub in inn.groupby('src_continent'):
             col = COLORS.get(cont, COLORS['Other'])
             continents_used.add(cont)
-            for _, row in sub.iterrows():
-                draw_geodesic(row['src_lon'], row['src_lat'], row['dst_lon'], row['dst_lat'], col)
+            for _, r in sub.iterrows():
+                draw_geodesic(r['src_lon'], r['src_lat'],
+                              r['dst_lon'], r['dst_lat'], col)
 
-    # --- Plot Airports (Selected Country) ---
+    # =========================================================================
+    # 7. AIRPORTS
+    # =========================================================================
     if not apts_sel.empty:
-        ax.scatter(
-            apts_sel['lon'], apts_sel['lat'],
-            transform=ccrs.PlateCarree(),
-            s=sel_dot_size, color='white', alpha=0.95,
-            linewidths=0.25, edgecolors='#111', zorder=3
-        )
+        ax.scatter(apts_sel['lon'], apts_sel['lat'],
+                   transform=ccrs.PlateCarree(),
+                   s=sel_dot_size, color='white',
+                   linewidths=0.25, edgecolors='#111', zorder=3)
 
-    # --- Plot Other Airports ---
     other_chunks = []
     if direction in ('outbound', 'both'):
-        sub = df[df['src_country_std'].eq(c_std)][['dst_lon', 'dst_lat']].dropna()
-        other_chunks.append(sub.rename(columns={'dst_lon': 'lon', 'dst_lat': 'lat'}))
+        other_chunks.append(
+            df[df['src_country_std'].eq(c_std)][['dst_lon','dst_lat']]
+            .rename(columns={'dst_lon':'lon','dst_lat':'lat'})
+        )
     if direction in ('inbound', 'both'):
-        sub = df[df['dst_country_std'].eq(c_std)][['src_lon', 'src_lat']].dropna()
-        other_chunks.append(sub.rename(columns={'src_lon': 'lon', 'src_lat': 'lat'}))
+        other_chunks.append(
+            df[df['dst_country_std'].eq(c_std)][['src_lon','src_lat']]
+            .rename(columns={'src_lon':'lon','src_lat':'lat'})
+        )
 
     if other_chunks:
-        other_airports = pd.concat(other_chunks, ignore_index=True)
-        # Simple coordinate rounding to deduplicate dots
-        other_airports['lon_r'] = other_airports['lon'].round(6)
-        other_airports['lat_r'] = other_airports['lat'].round(6)
-        other_airports = other_airports.drop_duplicates(['lon_r', 'lat_r'])
+        others = pd.concat(other_chunks).dropna().round(6).drop_duplicates()
+        ax.scatter(others['lon'], others['lat'],
+                   transform=ccrs.PlateCarree(),
+                   s=other_dot_size, color='#cfcfcf',
+                   linewidths=0.25, edgecolors='#111', zorder=3)
 
-        # Exclude dots that overlap with the selected country airports
-        if not apts_sel.empty:
-            sel_xy = set(zip(apts_sel['lon'].round(6), apts_sel['lat'].round(6)))
-            other_airports = other_airports[~other_airports[['lon_r', 'lat_r']].apply(tuple, axis=1).isin(sel_xy)]
-
-        if not other_airports.empty:
-            ax.scatter(
-                other_airports['lon'], other_airports['lat'],
-                transform=ccrs.PlateCarree(),
-                s=other_dot_size, color='#cfcfcf', alpha=0.85,
-                linewidths=0.25, edgecolors='#111', zorder=3
-            )
-
-    # --- Legend ---
+    # =========================================================================
+    # 8. LEGEND & TITLE
+    # =========================================================================
     if continents_used:
-        handles = [
-            Line2D([0], [0], color=COLORS.get(cont, COLORS['Other']), lw=2, label=cont)
-            for cont in sorted(continents_used)
-        ]
-        leg = ax.legend(handles=handles, facecolor='black', edgecolor='#444', labelcolor='white', loc='lower left')
+        handles = [Line2D([0],[0], color=COLORS[c], lw=2, label=c)
+                   for c in sorted(continents_used)]
+        leg = ax.legend(handles=handles, loc='lower left',
+                        facecolor='black', edgecolor='#444')
         for t in leg.get_texts():
             t.set_color('white')
 
-    ax.set_title(f"Flights: {country_name} ({direction.capitalize()})", color='white', fontsize=14)
+    ax.set_title(f"Flights: {country_name} ({direction.capitalize()})",
+                 color='white', fontsize=14)
+
     plt.tight_layout()
     return fig
+
 
 # =============================================================================
 #                              STREAMLIT UI
